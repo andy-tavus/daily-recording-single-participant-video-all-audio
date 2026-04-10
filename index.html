@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Daily Single-Participant Recording Demo</title>
+    <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 1rem;
+      }
+      #controls {
+        margin-bottom: 1rem;
+      }
+      #room-url {
+        width: 60%;
+        padding: 0.4rem;
+      }
+      #join-btn {
+        padding: 0.4rem 0.8rem;
+      }
+      #frame-container {
+        width: 100%;
+        height: 80vh;
+      }
+      iframe {
+        border: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      Tavus + Daily: implement this same frontend behavior (copy the startRecording shape exactly).
+
+      Setup: daily-js Daily.createFrame + join({ url }) like this app. Room has cloud recording enabled.
+      Call: one human (local) + one Tavus replica (remote, user_id contains "tavus-replica").
+
+      Before startRecording:
+      - Wait until call.participants().local.session_id exists (poll ~50ms, timeout e.g. 20s).
+      - If local.user_id looks like the replica string, do not record (mis-joined client).
+
+      call.startRecording({
+        type: 'cloud',
+        layout: {
+          preset: 'custom',
+          composition_id: 'daily:baseline',
+          composition_params: {
+            mode: 'single',
+            'videoSettings.preferredParticipantIds':
+              local.user_id && local.user_id !== local.session_id
+                ? local.session_id + ',' + local.user_id
+                : String(local.session_id),
+            'videoSettings.preferScreenshare': false,
+          },
+          session_assets: {},
+        },
+        participants: {
+          video: [ local.session_id ],
+          audio: all participant session_ids from call.participants() deduped, or ['*'] if empty,
+        },
+      });
+
+      Do not use layout.preset 'single-participant' (it locks audio to one participant).
+      Use flat dotted keys in composition_params — not nested videoSettings { }.
+
+      With Tavus tokens, local user_id usually equals local session_id, so preferredParticipantIds is one id.
+    -->
+    <div id="controls">
+      <input
+        id="room-url"
+        type="text"
+        placeholder="Enter Daily room URL (e.g. https://your-team.daily.co/hello)"
+      />
+      <button id="join-btn">Join & Start Recording</button>
+      <span id="status"></span>
+    </div>
+
+    <div id="frame-container"></div>
+
+    <script>
+      let call = null;
+      let recordingStarted = false;
+
+      const statusEl = document.getElementById('status');
+      const joinBtn = document.getElementById('join-btn');
+      const roomInput = document.getElementById('room-url');
+      const frameContainer = document.getElementById('frame-container');
+
+      function setStatus(msg) {
+        statusEl.textContent = msg;
+      }
+
+      /** Case-insensitive match on `user_id` — never use this participant's camera in the composite. */
+      const EXCLUDE_VIDEO_USER_ID_PART = 'tavus-replica';
+
+      function userIdLooksLikeTavusReplica(userId) {
+        return (userId || '').toLowerCase().includes(EXCLUDE_VIDEO_USER_ID_PART);
+      }
+
+      /**
+       * Explicit audio list (same semantics as ['*'] but avoids any server ambiguity with '*'). Every
+       * current participant session_id, deduped.
+       */
+      function allAudioSessionIds(participantsObj) {
+        const seen = new Set();
+        const out = [];
+        const add = (sid) => {
+          if (!sid || seen.has(sid)) return;
+          seen.add(sid);
+          out.push(sid);
+        };
+        if (participantsObj.local?.session_id) add(participantsObj.local.session_id);
+        for (const key of Object.keys(participantsObj)) {
+          if (key === 'local') continue;
+          add(participantsObj[key]?.session_id);
+        }
+        return out;
+      }
+
+      function participantBrief(p) {
+        if (!p) return null;
+        return {
+          session_id: p.session_id,
+          user_id: p.user_id,
+          user_name: p.user_name,
+          local: p.local,
+        };
+      }
+
+      function logParticipantsSnapshot(callInstance, label) {
+        const parts = callInstance.participants();
+        const out = { local: participantBrief(parts.local) };
+        for (const key of Object.keys(parts)) {
+          if (key === 'local') continue;
+          out[key] = participantBrief(parts[key]);
+        }
+        console.log(`[Daily] ${label}`, out);
+      }
+
+      /** Subscribe before `join()` so joins during connect are logged. */
+      function attachParticipantConsoleLogging(callInstance) {
+        callInstance.on('joined-meeting', () => {
+          logParticipantsSnapshot(callInstance, 'joined-meeting (snapshot)');
+        });
+        callInstance.on('participant-joined', (ev) => {
+          console.log('[Daily] participant-joined', participantBrief(ev.participant));
+          logParticipantsSnapshot(callInstance, 'participants() after join');
+        });
+        callInstance.on('participant-left', (ev) => {
+          console.log('[Daily] participant-left', participantBrief(ev.participant));
+          logParticipantsSnapshot(callInstance, 'participants() after leave');
+        });
+      }
+
+      async function joinRoomAndStartRecording() {
+        const url = roomInput.value.trim();
+        if (!url) {
+          alert('Please enter a Daily room URL.');
+          return;
+        }
+
+        // Create the Daily Prebuilt iframe
+        call = window.Daily.createFrame(frameContainer, {
+          showLeaveButton: true,
+          iframeStyle: {
+            width: '100%',
+            height: '100%',
+          },
+        });
+
+        attachParticipantConsoleLogging(call);
+
+        setStatus('Joining room...');
+        try {
+          await call.join({ url });
+        } catch (e) {
+          console.error(e);
+          setStatus('Error joining room. Check the URL and recording settings.');
+          return;
+        }
+
+        // join() can resolve before `participants().local.session_id` exists. The old if/else could also miss
+        // `joined-meeting` if it fired before we attached a listener — poll until local is fully wired.
+        setStatus('Joined. Waiting for local participant (session_id)...');
+        let local;
+        try {
+          local = await waitForLocalParticipantReady(call);
+        } catch (e) {
+          console.error(e);
+          setStatus('Timed out waiting for local participant. Try again.');
+          return;
+        }
+
+        startRecordingForLocalOnly(local);
+      }
+
+      /** Resolves when `participants().local` has a `session_id` (recording IDs depend on it). */
+      async function waitForLocalParticipantReady(call, timeoutMs = 20000) {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          const p = call.participants().local;
+          if (p && p.session_id) return p;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        throw new Error('Local participant has no session_id after join');
+      }
+
+      async function startRecordingForLocalOnly(local) {
+        if (recordingStarted) return;
+        recordingStarted = true;
+
+        const session_id = local.session_id;
+        const user_id = local.user_id;
+
+        if (userIdLooksLikeTavusReplica(user_id)) {
+          recordingStarted = false;
+          console.error(
+            '[Daily] Refusing recording: local participant user_id looks like Tavus replica:',
+            user_id
+          );
+          setStatus('Cannot record: local user_id matches excluded id.');
+          return;
+        }
+
+        // Only local session for video — never list remotes (explicit local-only).
+        const videoSessionIds = [session_id];
+
+        // VCS matches these to peer.id; include both when token sets user_id !== session_id.
+        const preferredParticipantIds =
+          user_id && user_id !== session_id
+            ? `${session_id},${user_id}`
+            : String(session_id);
+
+        const participantsObj = call.participants();
+        let audioSessionIds = allAudioSessionIds(participantsObj);
+        if (audioSessionIds.length === 0) {
+          audioSessionIds = ['*'];
+        }
+
+        for (const key of Object.keys(participantsObj)) {
+          if (key === 'local') continue;
+          const p = participantsObj[key];
+          if (p && userIdLooksLikeTavusReplica(p.user_id)) {
+            console.warn(
+              '[Daily] Remote Tavus replica present (audio only in composite; must not be in video list):',
+              participantBrief(p)
+            );
+          }
+        }
+
+        // composition_params: Daily recommends flat dot-notation keys (e.g. "videoSettings.preferredParticipantIds")
+        // rather than nested videoSettings: { ... } — see support / VCS param docs.
+        const recordingPayload = {
+          type: 'cloud',
+          layout: {
+            preset: 'custom',
+            composition_id: 'daily:baseline',
+            composition_params: {
+              mode: 'single',
+              'videoSettings.preferredParticipantIds': preferredParticipantIds,
+              'videoSettings.preferScreenshare': false,
+            },
+            session_assets: {},
+          },
+          participants: {
+            video: videoSessionIds,
+            audio: audioSessionIds,
+          },
+        };
+
+        console.log('[Daily] startRecording payload (video = local session ONLY)', {
+          local: participantBrief(local),
+          videoSessionIds,
+          audioSessionIds,
+          preferredParticipantIds,
+          session_assets: recordingPayload.layout.session_assets,
+        });
+        console.log(
+          '[Daily] startRecording JSON (copy for support)',
+          JSON.stringify(recordingPayload, null, 2)
+        );
+
+        setStatus('Starting cloud recording (local video only, all audio)...');
+
+        try {
+          await call.startRecording(recordingPayload);
+          setStatus('Recording started.');
+        } catch (e) {
+          console.error(e);
+          setStatus('Failed to start recording. Is cloud recording enabled for this room?');
+        }
+      }
+
+      joinBtn.addEventListener('click', joinRoomAndStartRecording);
+    </script>
+  </body>
+</html>
