@@ -10,6 +10,24 @@
         margin: 0;
         padding: 1rem;
       }
+      #page-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.5rem 1rem;
+        margin-bottom: 1rem;
+        max-width: 56rem;
+      }
+      #page-head p {
+        margin: 0;
+        line-height: 1.45;
+        flex: 1 1 16rem;
+      }
+      #page-head a {
+        white-space: nowrap;
+        font-size: 0.95rem;
+      }
       #controls {
         margin-bottom: 1rem;
       }
@@ -68,6 +86,18 @@
 
       With Tavus tokens, local user_id usually equals local session_id, so preferredParticipantIds is one id.
     -->
+    <header id="page-head">
+      <p>
+        This page demonstrates Daily <strong>cloud recording</strong> where the composite uses <strong>only the
+        local participant’s camera</strong> but <strong>everyone’s audio</strong> in a single file—the usual
+        Tavus setup with one human and one replica in the room.
+      </p>
+      <a
+        href="https://github.com/andy-tavus/daily-recording-single-participant-video-all-audio"
+        target="_blank"
+        rel="noopener noreferrer"
+        >SOURCE</a>
+    </header>
     <div id="controls">
       <input
         id="room-url"
