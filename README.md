@@ -1,5 +1,7 @@
 # Daily cloud recording: local video + all audio (Tavus)
 
+**Repo:** [github.com/andy-tavus/daily-recording-single-participant-video-all-audio](https://github.com/andy-tavus/daily-recording-single-participant-video-all-audio)
+
 Minimal **`daily-js`** demo: **one cloud recording** with **only the human’s camera** in the composite and **everyone’s audio** (human + Tavus replica) in the same file.
 
 ## Run the demo
