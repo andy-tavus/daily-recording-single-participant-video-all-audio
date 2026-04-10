@@ -24,9 +24,13 @@
         line-height: 1.45;
         flex: 1 1 16rem;
       }
-      #page-head a {
+      #page-head .page-head-links {
+        margin: 0;
         white-space: nowrap;
         font-size: 0.95rem;
+      }
+      #page-head .page-head-links a {
+        white-space: nowrap;
       }
       #controls {
         margin-bottom: 1rem;
@@ -92,11 +96,11 @@
         local participant’s camera</strong> but <strong>everyone’s audio</strong> in a single file—the usual
         Tavus setup with one human and one replica in the room.
       </p>
-      <a
-        href="https://github.com/andy-tavus/daily-recording-single-participant-video-all-audio"
-        target="_blank"
-        rel="noopener noreferrer"
-        >SOURCE</a>
+      <p class="page-head-links">
+        <a href="https://github.com/andy-tavus/daily-recording-single-participant-video-all-audio" target="_blank" rel="noopener noreferrer">SOURCE</a>
+        <span aria-hidden="true"> | </span>
+        <a href="https://github.com/andy-tavus/daily-recording-single-participant-video-all-audio/blob/main/README.md" target="_blank" rel="noopener noreferrer">README</a>
+      </p>
     </header>
     <div id="controls">
       <input
